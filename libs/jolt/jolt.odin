@@ -2356,3 +2356,4 @@ foreign lib {
 	LinearCurve_GetPoint      :: proc(curve: ^LinearCurve, index: u32) -> Point ---
 	LinearCurve_GetPoints     :: proc(curve: ^LinearCurve, points: ^Point, count: ^u32) ---
 }
+

@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-CONFIG=${1:-Release}
+CONFIG=${1:-Debug}
 
 echo "Building joltc with config: $CONFIG"
 

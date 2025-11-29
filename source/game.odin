@@ -28,7 +28,7 @@ created.
 package game
 
 import "core:math"
-// import "core:fmt"
+import "core:fmt"
 // import "core:math/linalg"
 import rl "vendor:raylib"
 import rlgl "vendor:raylib/rlgl"
@@ -36,6 +36,7 @@ import jolt "../libs/jolt"
 import "base:runtime"
 import "core:log"
 import "core:math/linalg"
+// import "core:math/noise"
 
 PIXEL_WINDOW_HEIGHT :: 180
 
@@ -53,8 +54,14 @@ Game_Memory :: struct {
     run:bool,
     physicsManager:Physics_Manager,
     character:Character,
-    floor: jolt.BodyID,
     boxes: [dynamic]Box,
+    floor:Floor,
+}
+Floor :: struct {
+    floor: jolt.BodyID,
+    height_map_model:rl.Model,
+    height_map_texture:rl.Texture,
+    position:Vec3,
 }
 
 Physics_Manager :: struct {
@@ -203,7 +210,7 @@ charecter_physics_update :: proc() {
     if jolt.CharacterBase_GetGroundState(auto_cast g.character.physics_character) == .OnGround {
         for i in 0..<jolt.CharacterVirtual_GetNumActiveContacts(g.character.physics_character) {
             contact:jolt.CharacterVirtualContact; jolt.CharacterVirtual_GetActiveContact(g.character.physics_character, i, &contact)
-            if contact.bodyB == g.floor do continue
+            if contact.bodyB == g.floor.floor do continue
             if contact.motionTypeB == .Dynamic {
                 PUSH_FORCE :: 100
                 push_vector := -contact.contactNormal * PUSH_FORCE
@@ -216,7 +223,7 @@ charecter_physics_update :: proc() {
 draw :: proc() {
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.BLUE)
-
+	rl.DrawText(fmt.ctprintf("X:%f Y:%f Z:%f",g.character.position.x,g.character.position.y,g.character.position.z),0,0,20,rl.BLACK)
 	rl.BeginMode3D(spawn_3d_cam())
     rl.DrawGrid(100, 1)
     rl.DrawCapsule(g.character.position, g.character.position + g.character.up * CHARACTER_CAPSULE_HALF_HEIGHT * 2, CHARACTER_CAPSULE_RADIUS, 16, 8, rl.ORANGE)
@@ -232,8 +239,9 @@ draw :: proc() {
         rl.DrawCubeV(0, box.extent * 2, box.color)
         rl.DrawCubeWiresV(0, box.extent * 2, rl.BLACK)
         rlgl.PopMatrix()
+        // log.debug(g.floor.position)
+        rl.DrawModel(g.floor.height_map_model,{g.floor.position.x,g.floor.position.y,g.floor.position.z},1,rl.RED)
     }
-
 	rl.EndMode3D()
 
 	//todo add a 2d ui camera
@@ -319,6 +327,79 @@ add_floor :: proc(pm:^Physics_Manager) -> jolt.BodyID {
     return floor_body_id
 }
 
+rgb_to_gray :: proc(color:rl.Color) -> f32 {
+    r_f := f32(color.r) / 255.0
+    g_f := f32(color.g) / 255.0
+    b_f := f32(color.b) / 255.0
+    //     #define GRAY_VALUE(c) ((float)(c.r + c.g + c.b)/3.0f) rl gray value
+    return 0.2126*r_f + 0.7152*g_f + 0.0722*b_f
+}
+
+rgb_to_gray_ray :: proc(color:rl.Color) -> f32 {
+    return (f32(color.r + color.g+ color.b) / 3.0)
+}
+
+
+add_height_map_floor :: proc(sample_count:u32)  -> Floor{
+    log.debug("in height map floor")
+    points := make([dynamic]f32 , sample_count*sample_count)
+    defer delete(points)
+    mat: = make([dynamic]u8 , sample_count*sample_count)
+    defer delete(mat)
+    log.debug("generating points")
+    // height_map := rl.GenImageColor(auto_cast sample_count,auto_cast sample_count,rl.BLUE)
+    height_map := rl.GenImagePerlinNoise(auto_cast sample_count,auto_cast sample_count,0,0,1.0)
+    defer rl.UnloadImage(height_map)
+    for y:u32 =0;y<sample_count-1; y+=1{
+        for x:u32 =0;x<sample_count-1; x+=1{
+            color := rl.GetImageColor(height_map,auto_cast x,auto_cast y)
+            noise_val := rgb_to_gray(color)
+            log.debug(noise_val)
+            points[y*sample_count+x] = noise_val
+            mat[y*sample_count+x] = 0 // default mat
+        }
+    }
+    // log.debug(points[:])
+    log.debug("about to create floor settings")
+    height:f32 =100
+    //todo the height is fucked
+    floor_position := Vec3 {-5, -50, -5}
+    floor_scale := Vec3{auto_cast sample_count,height,auto_cast sample_count}
+    height_settings := jolt.HeightFieldShapeSettings_Create(
+        samples=raw_data(points),
+        offset=&floor_position,
+        scale=&floor_scale,
+        sampleCount=sample_count,
+        materialIndices=raw_data(mat),
+    )
+    log.debug("created height settings")
+    // floor_extent := Vec3 {100, 0.05, 100}
+    floor_shape := jolt.HeightFieldShapeSettings_CreateShape(height_settings)
+    defer jolt.Shape_Destroy(auto_cast floor_shape)
+    floor_settings := jolt.BodyCreationSettings_Create3(
+        shape = auto_cast floor_shape,
+        position = &{0,0,0},
+        rotation = &QUAT_IDENTITY,
+        motionType = .Static,
+        objectLayer = PHYS_LAYER_NON_MOVING,
+    )
+    log.debug("creating body")
+    floor_body_id := jolt.BodyInterface_CreateAndAddBody(g.physicsManager.bodyInterface, floor_settings, .Activate)
+    jolt.BodyCreationSettings_Destroy(floor_settings)
+    mesh := rl.GenMeshHeightmap(height_map, {floor_scale.x*(auto_cast sample_count),floor_scale.y,floor_scale.z*(auto_cast sample_count)})
+    model := rl.LoadModelFromMesh(mesh)
+    texture := rl.LoadTextureFromImage(height_map)
+    model.materials[0].maps[0].texture = texture // Set map diffuse texture
+
+    return Floor{
+        floor=floor_body_id,
+        height_map_model=model,
+        height_map_texture=texture,
+        position = floor_position,
+    }
+
+}
+
 add_box :: proc(box: Box) {
     box := box
 
@@ -360,21 +441,21 @@ add_character :: proc(pm:^Physics_Manager) {
     @static listener_procs: jolt.CharacterContactListener_Procs
     listener_procs = {
         OnContactAdded = proc "c" (context_ptr: rawptr, character: ^jolt.CharacterVirtual, other_body_id: jolt.BodyID, _: jolt.SubShapeID, contact_point: ^Vec3, contact_normal: ^Vec3, contact_settings: ^jolt.CharacterContactSettings) {
-            if other_body_id == g.floor do return
+            if other_body_id == g.floor.floor do return
 
             context = (cast(^runtime.Context)context_ptr)^
 
             log.debugf("Contact added: %v", other_body_id)
         },
         OnContactPersisted = proc "c" (context_ptr: rawptr, character: ^jolt.CharacterVirtual, other_body_id: jolt.BodyID, _: jolt.SubShapeID, contact_point: ^Vec3, contact_normal: ^Vec3, contact_settings: ^jolt.CharacterContactSettings) {
-            if other_body_id == g.floor  do return
+            if other_body_id == g.floor.floor  do return
 
             context = (cast(^runtime.Context)context_ptr)^
 
             log.debugf("Contact persisted: %v", other_body_id)
         },
         OnContactRemoved = proc "c" (context_ptr: rawptr, character: ^jolt.CharacterVirtual, other_body_id: jolt.BodyID, _: jolt.SubShapeID) {
-            if other_body_id == g.floor  do return
+            if other_body_id == g.floor.floor  do return
 
             context = (cast(^runtime.Context)context_ptr)^
 
@@ -409,6 +490,8 @@ game_update :: proc() {
 game_init_window :: proc() {
 	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
 	rl.InitWindow(1280, 720, "Odin + Raylib + Hot Reload template!")
+	rl.DisableCursor()
+
 	rl.SetWindowPosition(200, 200)
 	rl.SetTargetFPS(500)
 	rl.SetExitKey(nil)
@@ -421,10 +504,12 @@ game_init :: proc() {
 	g = new(Game_Memory)
 	g.run = true
 	g.physicsManager = create_physics_mannager()
-	g.floor = add_floor(&g.physicsManager)
-	for i := 0; i < 100;i +=1 {
-        add_box({ position = { 0,    0.75, -3   }, extent = 0.75, rotation = 1, color = rl.RED })
-        add_box({ position = { 0.75, 2.5,  -3   }, extent = 0.5,  rotation = 1, color = rl.BLUE })
+	// g.floor = add_floor(&g.physicsManager)
+	g.floor = add_height_map_floor(10)
+
+	for i := 0; i < 20;i +=1 {
+        // add_box({ position = { 0,    0.75, -3   }, extent = 0.75, rotation = 1, color = rl.RED })
+        // add_box({ position = { 0.75, 2.5,  -3   }, extent = 0.5,  rotation = 1, color = rl.BLUE })
         add_box({ position = { 0.25, 5,    -2.5 }, extent = 0.25, rotation = 1, color = rl.GREEN })
         add_box({ position = { 0.25, 5,    -2.5 }, extent = {1, 0.25, 0.5}, rotation = 1, color = rl.PURPLE })
 	}
@@ -450,6 +535,11 @@ game_shutdown :: proc() {
     // log.destroy_console_logger(context.logger,allocator=context.allocator)
     destroy_physics_mannager(&g.physicsManager)
     delete(g.boxes)
+    rl.UnloadModel(g.floor.height_map_model)
+    img:= rl.LoadImageFromTexture(g.floor.height_map_texture)
+    rl.ExportImage(img,"./heightmap.png")
+    rl.UnloadImage(img)
+    rl.UnloadTexture(g.floor.height_map_texture)
 	free(g)
 }
 
