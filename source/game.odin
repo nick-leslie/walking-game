@@ -59,8 +59,9 @@ Game_Memory :: struct {
 }
 Floor :: struct {
     floor: jolt.BodyID,
+    points:[dynamic]Vec3,
     height_map_model:rl.Model,
-    height_map_texture:rl.Texture,
+    // height_map_texture:rl.Texture,
     position:Vec3,
 }
 
@@ -240,8 +241,11 @@ draw :: proc() {
         rl.DrawCubeWiresV(0, box.extent * 2, rl.BLACK)
         rlgl.PopMatrix()
         // log.debug(g.floor.position)
-        rl.DrawModel(g.floor.height_map_model,{g.floor.position.x,g.floor.position.y,g.floor.position.z},1,rl.RED)
     }
+     rl.DrawModel(g.floor.height_map_model,{g.floor.position.x,g.floor.position.y,g.floor.position.z},1,rl.RED)
+    // for &point in g.floor.points {
+    //     rl.DrawSphere(point,2,rl.RED)
+    // }
 	rl.EndMode3D()
 
 	//todo add a 2d ui camera
@@ -340,15 +344,14 @@ rgb_to_gray_ray :: proc(color:rl.Color) -> f32 {
 }
 
 
-add_height_map_floor :: proc(sample_count:u32)  -> Floor{
+add_height_map_floor :: proc(sample_count:u32,max_height:f32,cell_size:f32)  -> Floor{
     log.debug("in height map floor")
     points := make([dynamic]f32 , sample_count*sample_count)
     defer delete(points)
     mat: = make([dynamic]u8 , sample_count*sample_count)
     defer delete(mat)
     log.debug("generating points")
-    // height_map := rl.GenImageColor(auto_cast sample_count,auto_cast sample_count,rl.BLUE)
-    height_map := rl.GenImagePerlinNoise(auto_cast sample_count,auto_cast sample_count,0,0,1.0)
+    height_map := rl.GenImagePerlinNoise(auto_cast sample_count,auto_cast sample_count,0,0,1)
     defer rl.UnloadImage(height_map)
     for y:u32 =0;y<sample_count-1; y+=1{
         for x:u32 =0;x<sample_count-1; x+=1{
@@ -361,24 +364,25 @@ add_height_map_floor :: proc(sample_count:u32)  -> Floor{
     }
     // log.debug(points[:])
     log.debug("about to create floor settings")
-    height:f32 =100
-    //todo the height is fucked
-    floor_position := Vec3 {-5, -50, -5}
-    floor_scale := Vec3{auto_cast sample_count,height,auto_cast sample_count}
+
+    floor_scale := Vec3{1,max_height,1}
     height_settings := jolt.HeightFieldShapeSettings_Create(
         samples=raw_data(points),
-        offset=&floor_position,
+        offset=&{0,0,0},
         scale=&floor_scale,
         sampleCount=sample_count,
         materialIndices=raw_data(mat),
     )
     log.debug("created height settings")
     // floor_extent := Vec3 {100, 0.05, 100}
+    floor_position := Vec3 { auto_cast(sample_count/2) * -1.0, 0,auto_cast (sample_count/2) * -1.0}
+
+
     floor_shape := jolt.HeightFieldShapeSettings_CreateShape(height_settings)
     defer jolt.Shape_Destroy(auto_cast floor_shape)
     floor_settings := jolt.BodyCreationSettings_Create3(
         shape = auto_cast floor_shape,
-        position = &{0,0,0},
+        position = &floor_position,
         rotation = &QUAT_IDENTITY,
         motionType = .Static,
         objectLayer = PHYS_LAYER_NON_MOVING,
@@ -386,15 +390,12 @@ add_height_map_floor :: proc(sample_count:u32)  -> Floor{
     log.debug("creating body")
     floor_body_id := jolt.BodyInterface_CreateAndAddBody(g.physicsManager.bodyInterface, floor_settings, .Activate)
     jolt.BodyCreationSettings_Destroy(floor_settings)
-    mesh := rl.GenMeshHeightmap(height_map, {floor_scale.x*(auto_cast sample_count),floor_scale.y,floor_scale.z*(auto_cast sample_count)})
-    model := rl.LoadModelFromMesh(mesh)
-    texture := rl.LoadTextureFromImage(height_map)
-    model.materials[0].maps[0].texture = texture // Set map diffuse texture
 
+    mesh := rl.GenMeshHeightmap(height_map, { auto_cast (sample_count*1),max_height,auto_cast(sample_count*1)})
     return Floor{
         floor=floor_body_id,
-        height_map_model=model,
-        height_map_texture=texture,
+        height_map_model=rl.LoadModelFromMesh(mesh),
+        // height_map_texture=texture,
         position = floor_position,
     }
 
@@ -435,7 +436,7 @@ add_character :: proc(pm:^Physics_Manager) {
     settings.base.shape = auto_cast capsule_shape
     settings.innerBodyShape = auto_cast capsule_shape // "inner shape" that actually participates in physics (e.g. reacts to raycast and stuff)
 
-    character := jolt.CharacterVirtual_Create(&settings, &VEC3_ZERO, &QUAT_IDENTITY, 0, pm.physicsSystem)
+    character := jolt.CharacterVirtual_Create(&settings, &{0,100,0}, &QUAT_IDENTITY, 0, pm.physicsSystem)
 
     // use static var so the pointers survive
     @static listener_procs: jolt.CharacterContactListener_Procs
@@ -505,7 +506,7 @@ game_init :: proc() {
 	g.run = true
 	g.physicsManager = create_physics_mannager()
 	// g.floor = add_floor(&g.physicsManager)
-	g.floor = add_height_map_floor(10)
+	g.floor = add_height_map_floor(100,100,100)
 
 	for i := 0; i < 20;i +=1 {
         // add_box({ position = { 0,    0.75, -3   }, extent = 0.75, rotation = 1, color = rl.RED })
@@ -535,12 +536,18 @@ game_shutdown :: proc() {
     // log.destroy_console_logger(context.logger,allocator=context.allocator)
     destroy_physics_mannager(&g.physicsManager)
     delete(g.boxes)
-    rl.UnloadModel(g.floor.height_map_model)
-    img:= rl.LoadImageFromTexture(g.floor.height_map_texture)
-    rl.ExportImage(img,"./heightmap.png")
-    rl.UnloadImage(img)
-    rl.UnloadTexture(g.floor.height_map_texture)
+    unload_floor(&g.floor)
 	free(g)
+}
+
+unload_floor :: proc(floor:^Floor) {
+    delete(floor.points)
+    //todo causing leaks
+    rl.UnloadModel(g.floor.height_map_model)
+    // img:= rl.LoadImageFromTexture(g.floor.height_map_texture)
+    // rl.ExportImage(img,"./heightmap.png")
+    // rl.UnloadImage(img)
+    // rl.UnloadTexture(g.floor.height_map_texture)
 }
 
 @(export)
