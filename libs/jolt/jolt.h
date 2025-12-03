@@ -998,9 +998,9 @@ typedef struct JPH_JobSystem JPH_JobSystem;
 
 /* Calculate max tire impulses by combining friction, slip, and suspension impulse. Note that the actual applied impulse may be lower (e.g. when the vehicle is stationary on a horizontal surface the actual impulse applied will be 0) */
 typedef void (JPH_API_CALL* JPH_TireMaxImpulseCallback)(
-	uint32_t wheelIndex, 
+	uint32_t wheelIndex,
 	float* outLongitudinalImpulse,
-	float* outLateralImpulse, 
+	float* outLateralImpulse,
 	float suspensionImpulse,
 	float longitudinalFriction,
 	float lateralFriction,
@@ -2190,12 +2190,12 @@ JPH_CAPI void JPH_ShapeFilter_SetBodyID2(JPH_ShapeFilter* filter, JPH_BodyID id)
 
 /* JPH_SimShapeFilter */
 typedef struct JPH_SimShapeFilter_Procs {
-	bool(JPH_API_CALL* ShouldCollide)(void* userData, 
-		const JPH_Body* body1, 
-		const JPH_Shape* shape1, 
+	bool(JPH_API_CALL* ShouldCollide)(void* userData,
+		const JPH_Body* body1,
+		const JPH_Shape* shape1,
 		const JPH_SubShapeID* subShapeIDOfShape1,
 		const JPH_Body* body2,
-		const JPH_Shape* shape2, 
+		const JPH_Shape* shape2,
 		const JPH_SubShapeID* subShapeIDOfShape2
 		);
 } JPH_SimShapeFilter_Procs;

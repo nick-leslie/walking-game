@@ -102,7 +102,8 @@ QUAT_IDENTITY: Quat = 1
 VEC3_ZERO: Vec3 = 0
 
 //todo insert this into charecter
-MOVE_SPEED       :: 50
+MOVE_SPEED       :: 10
+SPRINT_MOD       :: 10
 AIR_MOVE_SPEED   :: 0.5
 AIR_DRAG         :: 0.9
 JUMP_SPEED       :: 20
@@ -197,10 +198,16 @@ charecter_physics_update :: proc() {
     input := linalg.mul(g.character.look_quat, g.character.move_input)
     input.y = 0
     input = linalg.normalize0(input)
-
-    if jolt.CharacterBase_IsSupported(auto_cast g.character.physics_character) == 1 {
-        new_velocity += input * MOVE_SPEED
+    log.debug(jolt.CharacterBase_IsSupported(auto_cast g.character.physics_character))
+    if jolt.CharacterBase_IsSupported(auto_cast g.character.physics_character) == true {
+        if rl.IsKeyDown(.LEFT_SHIFT) {
+            new_velocity += input * (MOVE_SPEED + SPRINT_MOD)
+            log.debug("sprinting")
+        }  else {
+            new_velocity += input * MOVE_SPEED
+        }
     } else {
+        log.debug("in air?")
         // preserve horizontal velocity
         current_horizontal_velocity := current_velocity - current_vertical_velocity
         new_velocity += current_horizontal_velocity * AIR_DRAG
@@ -259,7 +266,7 @@ draw :: proc() {
 
     rl.EndMode3D()
 	rl.DrawText(fmt.ctprintf("X:%f Y:%f Z:%f",g.character.position.x,g.character.position.y,g.character.position.z),0,0,20,rl.BLACK)
-
+	rl.DrawFPS(0,20)
 	//todo add a 2d ui camera
 
 	rl.EndDrawing()
@@ -279,7 +286,7 @@ spawn_3d_cam :: proc() -> rl.Camera3D {
 create_physics_mannager :: proc() -> Physics_Manager {
     ok := jolt.Init()
     log.debug(ok)
-    assert(ok == 1, "Failed to init Jolt Physics")
+    assert(ok == true, "Failed to init Jolt Physics")
     g_context = context
     jolt.SetTraceHandler(proc "c" (message: cstring) {
         context = g_context

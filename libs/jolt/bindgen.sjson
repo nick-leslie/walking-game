@@ -1,5 +1,8 @@
 inputs = [ "./jolt.h" ]
 output_folder = "."
+clang_include_paths = [
+	"/usr/lib/clang/20/include"
+]
 remove_type_prefix = "JPH_"
 remove_macro_prefix = "JPH_"
 remove_function_prefix = "JPH_"
