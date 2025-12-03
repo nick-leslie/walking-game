@@ -56,18 +56,20 @@ Game_Memory :: struct {
     physicsManager:Physics_Manager,
     character:Character,
     boxes: [dynamic]Box,
-    chunks:[MAX_LOADED_CHUNKS]Chunk,
+    chunks:Chunk,
+    chunk_load_index:int,
 }
 //todo merge the floor meshes
+// todo do we want array of structs
 Chunk :: struct {
-    floor: jolt.BodyID,
-    points:[dynamic]f32,
-    height_map_texture:rl.Texture,
-    position:Vec3,
-    scale:Vec3,
-    sample_size:u32,
-    cell_size:f32,
-    model:rl.Model,
+    floor: [MAX_LOADED_CHUNKS]jolt.BodyID,
+    points:[MAX_LOADED_CHUNKS][dynamic]f32,
+    texture:[MAX_LOADED_CHUNKS]rl.Texture,
+    position:[MAX_LOADED_CHUNKS]Vec3,
+    scale:[MAX_LOADED_CHUNKS]Vec3,
+    sample_size:[MAX_LOADED_CHUNKS]u32,
+    cell_size:[MAX_LOADED_CHUNKS]f32,
+    model:[MAX_LOADED_CHUNKS]rl.Model,
 }
 
 Physics_Manager :: struct {
@@ -217,8 +219,8 @@ charecter_physics_update :: proc() {
     if jolt.CharacterBase_GetGroundState(auto_cast g.character.physics_character) == .OnGround {
         for i in 0..<jolt.CharacterVirtual_GetNumActiveContacts(g.character.physics_character) {
             contact:jolt.CharacterVirtualContact; jolt.CharacterVirtual_GetActiveContact(g.character.physics_character, i, &contact)
-            for &floor in g.chunks {
-                if contact.bodyB == floor.floor do continue
+            for &floor in g.chunks.floor {
+                if contact.bodyB == floor do continue
             }
             if contact.motionTypeB == .Dynamic {
                 PUSH_FORCE :: 100
@@ -249,10 +251,11 @@ draw :: proc() {
         rlgl.PopMatrix()
         // log.debug(g.floor.position)
     }
-    for &chunk in g.chunks {
-    rl.DrawModel(chunk.model,{chunk.position.x,chunk.position.y,chunk.position.z},1,rl.RED)
+    for i := 0; i<MAX_LOADED_CHUNKS;i+=1 {
+        rl.DrawModel(g.chunks.model[i],{g.chunks.position[i].x,g.chunks.position[i].y,g.chunks.position[i].z},1,rl.RED)
 
     }
+
 
     rl.EndMode3D()
 	rl.DrawText(fmt.ctprintf("X:%f Y:%f Z:%f",g.character.position.x,g.character.position.y,g.character.position.z),0,0,20,rl.BLACK)
@@ -353,7 +356,7 @@ rgb_to_gray_ray :: proc(color:rl.Color) -> f32 {
 }
 
 //todo add an offset xy for gen
-add_height_map_floor :: proc(sample_count:u32,max_height:f32,cell_size:f32,chunk_offset:Vec3)  -> Chunk{
+generate_chunk :: proc(sample_count:u32,max_height:f32,cell_size:f32,chunk_offset:Vec3){
     log.debug("in height map floor")
     points := make([dynamic]f32 , sample_count*sample_count)
     // defer delete(points)
@@ -378,7 +381,6 @@ add_height_map_floor :: proc(sample_count:u32,max_height:f32,cell_size:f32,chunk
         for x:u32 =0;x<sample_count; x+=1{
             color := rl.GetImageColor(height_map,auto_cast x,auto_cast y)
             noise_val := rgb_to_gray(color)
-            log.debug(noise_val)
             points[y*sample_count+x] = noise_val
             mat[y*sample_count+x] = 0 // default mat
         }
@@ -426,15 +428,18 @@ add_height_map_floor :: proc(sample_count:u32,max_height:f32,cell_size:f32,chunk
     model := rl.LoadModelFromMesh(mesh)
     model.materials[0].maps[0].texture = texture
 
-    return Chunk{
-        floor=floor_body_id,
-        points=points,
-        height_map_texture=texture,
-        position = floor_position,
-        scale = floor_scale,
-        sample_size=sample_count,
-        cell_size=cell_size,
-        model=model,
+
+    g.chunks.floor[g.chunk_load_index]=floor_body_id
+    g.chunks.points[g.chunk_load_index]  =points
+    g.chunks.texture[g.chunk_load_index] =texture
+    g.chunks.position[g.chunk_load_index]= floor_position
+    g.chunks.scale[g.chunk_load_index]   = floor_scale
+    g.chunks.sample_size[g.chunk_load_index]=sample_count
+    g.chunks.cell_size[g.chunk_load_index]=cell_size
+    g.chunks.model[g.chunk_load_index]=model
+    g.chunk_load_index +=1
+    if g.chunk_load_index > MAX_LOADED_CHUNKS {
+        g.chunk_load_index = 0
     }
 
 }
@@ -481,8 +486,8 @@ add_character :: proc(pm:^Physics_Manager,spawn_pos:Vec3) {
     @static listener_procs: jolt.CharacterContactListener_Procs
     listener_procs = {
         OnContactAdded = proc "c" (context_ptr: rawptr, character: ^jolt.CharacterVirtual, other_body_id: jolt.BodyID, _: jolt.SubShapeID, contact_point: ^Vec3, contact_normal: ^Vec3, contact_settings: ^jolt.CharacterContactSettings) {
-            for &floor in g.chunks {
-                if other_body_id == floor.floor do return
+            for &floor in g.chunks.floor {
+                if other_body_id == floor do return
 
             }
 
@@ -491,8 +496,8 @@ add_character :: proc(pm:^Physics_Manager,spawn_pos:Vec3) {
             log.debugf("Contact added: %v", other_body_id)
         },
         OnContactPersisted = proc "c" (context_ptr: rawptr, character: ^jolt.CharacterVirtual, other_body_id: jolt.BodyID, _: jolt.SubShapeID, contact_point: ^Vec3, contact_normal: ^Vec3, contact_settings: ^jolt.CharacterContactSettings) {
-            for &floor in g.chunks {
-                if other_body_id == floor.floor do return
+            for &floor in g.chunks.floor {
+                if other_body_id == floor do return
             }
 
             context = (cast(^runtime.Context)context_ptr)^
@@ -500,8 +505,8 @@ add_character :: proc(pm:^Physics_Manager,spawn_pos:Vec3) {
             log.debugf("Contact persisted: %v", other_body_id)
         },
         OnContactRemoved = proc "c" (context_ptr: rawptr, character: ^jolt.CharacterVirtual, other_body_id: jolt.BodyID, _: jolt.SubShapeID) {
-            for &floor in g.chunks {
-                if other_body_id == floor.floor do return
+            for &floor in g.chunks.floor {
+                if other_body_id == floor do return
 
             }
 
@@ -525,15 +530,15 @@ game_init :: proc() {
 	g.run = true
 	g.physicsManager = create_physics_mannager()
 	// g.floor = add_floor(&g.physicsManager)
-	g.chunks[0] = add_height_map_floor(100,50,2,{0,0,0})
-	g.chunks[1] = add_height_map_floor(100,50,2,{1,0,0})
-	g.chunks[2] = add_height_map_floor(100,50,2,{0,0,1})
-	g.chunks[3] = add_height_map_floor(100,50,2,{1,0,1})
-	g.chunks[4] = add_height_map_floor(100,50,2,{-1,0,0})
-	g.chunks[5] = add_height_map_floor(100,50,2,{0,0,-1})
-	g.chunks[6] = add_height_map_floor(100,50,2,{-1,0,-1})
-	g.chunks[7] = add_height_map_floor(100,50,2,{-1,0,1})
-	g.chunks[8] = add_height_map_floor(100,50,2,{1,0,-1})
+	generate_chunk(200,100,2,{0,0,0})
+	generate_chunk(200,100,2,{1,0,0})
+	generate_chunk(200,100,2,{0,0,1})
+	generate_chunk(200,100,2,{1,0,1})
+	generate_chunk(200,100,2,{-1,0,0})
+	generate_chunk(200,100,2,{0,0,-1})
+	generate_chunk(200,100,2,{-1,0,-1})
+	generate_chunk(200,100,2,{-1,0,1})
+	generate_chunk(200,100,2,{1,0,-1})
 
 
 	for i := 0; i < 20;i +=1 {
@@ -565,15 +570,16 @@ game_shutdown :: proc() {
     // log.destroy_console_logger(context.logger,allocator=context.allocator)
     destroy_physics_mannager(&g.physicsManager)
     delete(g.boxes)
-    for &chunk in g.chunks {
-        unload_chunk(&chunk)
-    }
+    unload_chunk(&g.chunks)
 	free(g)
 }
 
-unload_chunk :: proc(chunk:^Chunk) {
-    delete(chunk.points)
-    rl.UnloadModel(chunk.model)
+unload_chunk :: proc(chunks:^Chunk) {
+    for i := 0;i<MAX_LOADED_CHUNKS;i+=1 {
+        delete(chunks.points[i])
+        rl.UnloadModel(chunks.model[i])
+
+    }
     // delete(floor.points)
     //todo causing leaks
     // rl.UnloadModel(floor.height_map_model)
