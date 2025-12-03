@@ -9,3 +9,4 @@ odin-c-bindgen
 JoltPhysics
 joltc
 *.so
+*.bin
