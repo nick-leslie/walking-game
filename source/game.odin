@@ -49,6 +49,8 @@ PHYS_BROAD_LAYER_NON_MOVING :: jolt.BroadPhaseLayer(1)
 CHARACTER_CAPSULE_HALF_HEIGHT : f32 : 1
 CHARACTER_CAPSULE_RADIUS : f32 : 0.3
 MAX_LOADED_CHUNKS :: 9
+SCREEN_WIDTH ::1280
+SCREEN_HEIGHT :: 720
 
 
 Game_Memory :: struct {
@@ -57,6 +59,7 @@ Game_Memory :: struct {
     character:Character,
     boxes: [dynamic]Box,
     chunks:Chunk,
+    render_texture:rl.RenderTexture,
     chunk_load_index:int,
 }
 //todo merge the floor meshes
@@ -239,37 +242,50 @@ charecter_physics_update :: proc() {
 }
 
 draw :: proc() {
-	rl.BeginDrawing()
-	rl.ClearBackground(rl.BLUE)
-	rl.BeginMode3D(spawn_3d_cam())
-    rl.DrawGrid(100, 1)
-    rl.DrawCapsule(g.character.position, g.character.position + g.character.up * CHARACTER_CAPSULE_HALF_HEIGHT * 2, CHARACTER_CAPSULE_RADIUS, 16, 8, rl.ORANGE)
-    fixed_interpolation_delta := g.physicsManager.fixed_update_accumulator / fixed_step
-    for &box in g.boxes {
-        pos := linalg.lerp(box.prev_position, box.position, fixed_interpolation_delta)
-        rot := linalg.quaternion_slerp(box.prev_rotation, box.rotation, fixed_interpolation_delta)
-        angle, axis := linalg.angle_axis_from_quaternion(rot)
+	{
+    	rl.BeginTextureMode(g.render_texture)
+        defer rl.EndTextureMode()
+    	rl.ClearBackground(rl.BLUE)
+     {
+    	rl.BeginMode3D(spawn_3d_cam())
+        defer rl.EndMode3D()
+        rl.DrawGrid(100, 1)
+        rl.DrawCapsule(g.character.position, g.character.position + g.character.up * CHARACTER_CAPSULE_HALF_HEIGHT * 2, CHARACTER_CAPSULE_RADIUS, 16, 8, rl.ORANGE)
+        fixed_interpolation_delta := g.physicsManager.fixed_update_accumulator / fixed_step
+        for &box in g.boxes {
+            pos := linalg.lerp(box.prev_position, box.position, fixed_interpolation_delta)
+            rot := linalg.quaternion_slerp(box.prev_rotation, box.rotation, fixed_interpolation_delta)
+            angle, axis := linalg.angle_axis_from_quaternion(rot)
 
-        rlgl.PushMatrix()
-        rlgl.Translatef(pos.x, pos.y, pos.z)
-        rlgl.Rotatef(linalg.to_degrees(angle), axis.x, axis.y, axis.z)
-        rl.DrawCubeV(0, box.extent * 2, box.color)
-        rl.DrawCubeWiresV(0, box.extent * 2, rl.BLACK)
-        rlgl.PopMatrix()
-        // log.debug(g.floor.position)
+            rlgl.PushMatrix()
+            rlgl.Translatef(pos.x, pos.y, pos.z)
+            rlgl.Rotatef(linalg.to_degrees(angle), axis.x, axis.y, axis.z)
+            rl.DrawCubeV(0, box.extent * 2, box.color)
+            rl.DrawCubeWiresV(0, box.extent * 2, rl.BLACK)
+            rlgl.PopMatrix()
+            // log.debug(g.floor.position)
+        }
+        for i := 0; i<MAX_LOADED_CHUNKS;i+=1 {
+            rl.DrawModel(g.chunks.model[i],{g.chunks.position[i].x,g.chunks.position[i].y,g.chunks.position[i].z},1,rl.RED)
+
+        }
+     }
+	}
+    {
+    	rl.BeginDrawing()
+    	defer rl.EndDrawing()
+        // DrawTextureRec(target.texture, (Rectangle){ 0, 0, (float)target.texture.width, (float)-target.texture.height }, (Vector2){ 0, 0 }, WHITE);
+        rl.DrawTextureRec(
+            g.render_texture.texture,
+            {0,0,f32(g.render_texture.texture.width),f32(-g.render_texture.texture.height)},
+            {0,0},
+            rl.WHITE,
+        )
+    	rl.DrawText(fmt.ctprintf("X:%f Y:%f Z:%f",g.character.position.x,g.character.position.y,g.character.position.z),0,0,20,rl.BLACK)
+    	rl.DrawFPS(0,20)
+    	//todo add a 2d ui camera
+
     }
-    for i := 0; i<MAX_LOADED_CHUNKS;i+=1 {
-        rl.DrawModel(g.chunks.model[i],{g.chunks.position[i].x,g.chunks.position[i].y,g.chunks.position[i].z},1,rl.RED)
-
-    }
-
-
-    rl.EndMode3D()
-	rl.DrawText(fmt.ctprintf("X:%f Y:%f Z:%f",g.character.position.x,g.character.position.y,g.character.position.z),0,0,20,rl.BLACK)
-	rl.DrawFPS(0,20)
-	//todo add a 2d ui camera
-
-	rl.EndDrawing()
 }
 
 spawn_3d_cam :: proc() -> rl.Camera3D {
@@ -537,24 +553,25 @@ game_init :: proc() {
 	g.run = true
 	g.physicsManager = create_physics_mannager()
 	// g.floor = add_floor(&g.physicsManager)
-	generate_chunk(200,100,2,{0,0,0})
-	generate_chunk(200,100,2,{1,0,0})
-	generate_chunk(200,100,2,{0,0,1})
-	generate_chunk(200,100,2,{1,0,1})
-	generate_chunk(200,100,2,{-1,0,0})
-	generate_chunk(200,100,2,{0,0,-1})
-	generate_chunk(200,100,2,{-1,0,-1})
-	generate_chunk(200,100,2,{-1,0,1})
-	generate_chunk(200,100,2,{1,0,-1})
+	generate_chunk(700,300,10,{0,0,0})
+	generate_chunk(700,300,10,{1,0,0})
+	generate_chunk(700,300,10,{0,0,1})
+	generate_chunk(700,300,10,{1,0,1})
+	generate_chunk(700,300,10,{-1,0,0})
+	generate_chunk(700,300,10,{0,0,-1})
+	generate_chunk(700,300,10,{-1,0,-1})
+	generate_chunk(700,300,10,{-1,0,1})
+	generate_chunk(700,300,10,{1,0,-1})
+	g.render_texture = rl.LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT  )
 
 
 	for i := 0; i < 20;i +=1 {
         // add_box({ position = { 0,    0.75, -3   }, extent = 0.75, rotation = 1, color = rl.RED })
         // add_box({ position = { 0.75, 2.5,  -3   }, extent = 0.5,  rotation = 1, color = rl.BLUE })
-        add_box({ position = { 0.25, 100,    -2.5 }, extent = 0.25, rotation = 1, color = rl.GREEN })
-        add_box({ position = { 0.25, 100,    -2.5 }, extent = {1, 0.25, 0.5}, rotation = 1, color = rl.PURPLE })
+        add_box({ position = { 0.25, 300,    -2.5 }, extent = 0.25, rotation = 1, color = rl.GREEN })
+        add_box({ position = { 0.25, 300,    -2.5 }, extent = {1, 0.25, 0.5}, rotation = 1, color = rl.PURPLE })
 	}
-	add_character(&g.physicsManager,{0,100,0})
+	add_character(&g.physicsManager,{0,500,0})
 	log.debug("We made it out of add charecter")
 	game_hot_reloaded(g)
 }
@@ -603,7 +620,7 @@ game_init_window :: proc() {
 	rl.DisableCursor()
 
 	rl.SetWindowPosition(200, 200)
-	rl.SetTargetFPS(500)
+	rl.SetTargetFPS(1000)
 	rl.SetExitKey(nil)
 }
 
