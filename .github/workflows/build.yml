@@ -13,8 +13,10 @@ jobs:
     name: Linux
     runs-on: ubuntu-latest
     steps:
-      - name: Build odin
-        run: ./build_odin.sh
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
 
       - uses: mymindstorm/setup-emsdk@v14
 
