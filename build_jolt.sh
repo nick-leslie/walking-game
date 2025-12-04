@@ -22,7 +22,7 @@ cmake -S joltc -B joltc/build \
 
 cmake --build joltc/build --config $CONFIG
 echo "copying lib and h file"
-cp joltc/include/joltc.h libs/jolt/jolt.h
-cp joltc/build/lib/libjoltc.so libs/jolt
+cp ./joltc/include/joltc.h libs/jolt/jolt.h
+cp ./joltc/build/lib/libjoltcd.so libs/jolt
 echo "generating bindigns"
 bindgen.bin ./libs/jolt
