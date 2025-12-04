@@ -17,11 +17,14 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release: false
-      
+
       - uses: mymindstorm/setup-emsdk@v14
-      
+
       - uses: actions/checkout@v4
-      
+
+      - name: Build jolt
+        run: ./build_jolt.sh
+
       - name: Build hot reload
         run: ./build_hot_reload.sh
 
@@ -38,14 +41,14 @@ jobs:
     name: MacOS
     strategy:
       matrix:
-        os: [macos-15-intel, macos-15]
+        os: [macos-15]
     runs-on: ${{matrix.os}}
     steps:
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release: false
-      
+
       - uses: mymindstorm/setup-emsdk@v14
 
       - uses: actions/checkout@v4

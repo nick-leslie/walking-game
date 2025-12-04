@@ -4,6 +4,17 @@ CONFIG=${1:-Debug}
 
 echo "Building joltc with config: $CONFIG"
 
+if [ ! -d "./joltc" ] ; then
+    echo cloning jolt c
+    git clone https://github.com/amerkoleci/joltc.git
+fi
+if [ ! -d "./odin-c-bindgen" ] ; then
+    echo cloning odin bind gen
+    git clone https://github.com/karl-zylinski/odin-c-bindgen.git
+    odin build odin-c-bindgen/src -out:bindgen.bin
+fi
+
+
 cmake -S joltc -B joltc/build \
     -DJPH_SAMPLES=OFF \
     -DJPH_BUILD_SHARED=ON \
