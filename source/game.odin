@@ -51,7 +51,7 @@ CHARACTER_CAPSULE_RADIUS : f32 : 0.3
 MAX_LOADED_CHUNKS :: 9
 SCREEN_WIDTH ::1280
 SCREEN_HEIGHT :: 720
-
+SHADER_COUNT :: 1
 
 Game_Memory :: struct {
     run:bool,
@@ -61,6 +61,7 @@ Game_Memory :: struct {
     chunks:Chunk,
     render_texture:rl.RenderTexture,
     chunk_load_index:int,
+    shaders:[SHADER_COUNT]rl.Shader,
 }
 //todo merge the floor meshes
 // todo do we want array of structs
@@ -219,8 +220,17 @@ charecter_physics_update :: proc() {
     // set the velocity to the character
     jolt.CharacterVirtual_SetLinearVelocity(g.character.physics_character, &new_velocity)
 
+    extended_settings := jolt.ExtendedUpdateSettings {
+       	stickToFloorStepDown             = { 0, -0.5, 0 },
+    	walkStairsStepUp                 = { 0, 0.4, 0 },
+    	walkStairsMinStepForward         = 0.02,
+    	walkStairsStepForwardTest        = 0.15,
+    	walkStairsCosAngleForwardContact = math.cos(math.to_radians_f32(75.0)),
+    	walkStairsStepDownExtra          = {},
+    }
+
     // update the character physics (btw there's also CharacterVirtual_ExtendedUpdate with stairs support)
-    jolt.CharacterVirtual_Update(g.character.physics_character, fixed_step, PHYS_LAYER_MOVING, g.physicsManager.physicsSystem, nil, nil)
+    jolt.CharacterVirtual_ExtendedUpdate(g.character.physics_character, fixed_step,&extended_settings , PHYS_LAYER_MOVING, g.physicsManager.physicsSystem, nil, nil)
 
     // read the new position into our structure
     jolt.CharacterVirtual_GetPosition(g.character.physics_character, &g.character.position)
@@ -274,13 +284,17 @@ draw :: proc() {
     {
     	rl.BeginDrawing()
     	defer rl.EndDrawing()
+        {
+            rl.BeginShaderMode(g.shaders[0])
+            defer rl.EndShaderMode()
+            rl.DrawTextureRec(
+                g.render_texture.texture,
+                {0,0,f32(g.render_texture.texture.width),f32(-g.render_texture.texture.height)},
+                {0,0},
+                rl.WHITE,
+            )
+        }
         // DrawTextureRec(target.texture, (Rectangle){ 0, 0, (float)target.texture.width, (float)-target.texture.height }, (Vector2){ 0, 0 }, WHITE);
-        rl.DrawTextureRec(
-            g.render_texture.texture,
-            {0,0,f32(g.render_texture.texture.width),f32(-g.render_texture.texture.height)},
-            {0,0},
-            rl.WHITE,
-        )
     	rl.DrawText(fmt.ctprintf("X:%f Y:%f Z:%f",g.character.position.x,g.character.position.y,g.character.position.z),0,0,20,rl.BLACK)
     	rl.DrawFPS(0,20)
     	//todo add a 2d ui camera
@@ -553,17 +567,17 @@ game_init :: proc() {
 	g.run = true
 	g.physicsManager = create_physics_mannager()
 	// g.floor = add_floor(&g.physicsManager)
-	generate_chunk(700,300,10,{0,0,0})
-	generate_chunk(700,300,10,{1,0,0})
-	generate_chunk(700,300,10,{0,0,1})
-	generate_chunk(700,300,10,{1,0,1})
-	generate_chunk(700,300,10,{-1,0,0})
-	generate_chunk(700,300,10,{0,0,-1})
-	generate_chunk(700,300,10,{-1,0,-1})
-	generate_chunk(700,300,10,{-1,0,1})
-	generate_chunk(700,300,10,{1,0,-1})
+	generate_chunk(700,300,5,{0,0,0})
+	generate_chunk(700,300,5,{1,0,0})
+	generate_chunk(700,300,5,{0,0,1})
+	generate_chunk(700,300,5,{1,0,1})
+	generate_chunk(700,300,5,{-1,0,0})
+	generate_chunk(700,300,5,{0,0,-1})
+	generate_chunk(700,300,5,{-1,0,-1})
+	generate_chunk(700,300,5,{-1,0,1})
+	generate_chunk(700,300,5,{1,0,-1})
 	g.render_texture = rl.LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT  )
-
+	g.shaders[0] = rl.LoadShader("pixlizer","assets/shaders/pixlizer.fs")
 
 	for i := 0; i < 20;i +=1 {
         // add_box({ position = { 0,    0.75, -3   }, extent = 0.75, rotation = 1, color = rl.RED })
@@ -595,6 +609,7 @@ game_shutdown :: proc() {
     destroy_physics_mannager(&g.physicsManager)
     delete(g.boxes)
     unload_chunk(&g.chunks)
+    rl.UnloadShader(g.shaders[0])
 	free(g)
 }
 
