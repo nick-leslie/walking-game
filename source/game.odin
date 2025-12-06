@@ -27,6 +27,7 @@ created.
 
 package game
 
+import "core:strings"
 import "core:math"
 import "core:fmt"
 // import "core:math/linalg"
@@ -62,6 +63,8 @@ Game_Memory :: struct {
     render_texture:rl.RenderTexture,
     chunk_load_index:int,
     shaders:[SHADER_COUNT]rl.Shader,
+    render_width:int,
+    render_height:int,
 }
 //todo merge the floor meshes
 // todo do we want array of structs
@@ -133,6 +136,8 @@ g: ^Game_Memory
 g_context: runtime.Context // should we store this
 
 update :: proc() {
+   	g.render_width  = int(rl.GetRenderWidth())
+	g.render_height = int(rl.GetRenderHeight())
     //reset movement controls could put this in a function
     g.character.move_input = {} // reset move every frame
     g.character.jump_requested = false
@@ -202,7 +207,6 @@ charecter_physics_update :: proc() {
     input := linalg.mul(g.character.look_quat, g.character.move_input)
     input.y = 0
     input = linalg.normalize0(input)
-    log.debug(jolt.CharacterBase_IsSupported(auto_cast g.character.physics_character))
     if jolt.CharacterBase_IsSupported(auto_cast g.character.physics_character) == true {
         if rl.IsKeyDown(.LEFT_SHIFT) {
             new_velocity += input * (MOVE_SPEED + SPRINT_MOD)
@@ -211,7 +215,6 @@ charecter_physics_update :: proc() {
             new_velocity += input * MOVE_SPEED
         }
     } else {
-        log.debug("in air?")
         // preserve horizontal velocity
         current_horizontal_velocity := current_velocity - current_vertical_velocity
         new_velocity += current_horizontal_velocity * AIR_DRAG
@@ -285,8 +288,8 @@ draw :: proc() {
     	rl.BeginDrawing()
     	defer rl.EndDrawing()
         {
-            rl.BeginShaderMode(g.shaders[0])
-            defer rl.EndShaderMode()
+            // rl.BeginShaderMode(g.shaders[0])g
+            // defer rl.EndShaderMode()
             rl.DrawTextureRec(
                 g.render_texture.texture,
                 {0,0,f32(g.render_texture.texture.width),f32(-g.render_texture.texture.height)},
@@ -395,15 +398,6 @@ rgb_to_gray_ray :: proc(color:rl.Color) -> f32 {
 //todo add an offset xy for gen
 generate_chunk :: proc(sample_count:u32,max_height:f32,cell_size:f32,chunk_offset:Vec3){
     log.debug("in height map floor")
-    points := make([dynamic]f32 , sample_count*sample_count)
-    // defer delete(points)
-    mat: = make([dynamic]u8 , sample_count*sample_count)
-    defer delete(mat)
-    log.debug("generating points")
-
-
-    chunk_world_size :=auto_cast (f32(sample_count-1)*cell_size)
-
     height_map := rl.GenImagePerlinNoise(
         auto_cast sample_count,
         auto_cast sample_count,
@@ -413,7 +407,26 @@ generate_chunk :: proc(sample_count:u32,max_height:f32,cell_size:f32,chunk_offse
     )
 
     defer rl.UnloadImage(height_map)
+    gen_chunk_from_image(height_map,max_height,cell_size,chunk_offset)
+}
+
+gen_chunk_from_image :: proc(height_map:rl.Image,max_height:f32,cell_size:f32,chunk_offset:Vec3) {
+    if height_map.width != height_map.width {
+        return
+    }
+    sample_count:u32 =  u32(height_map.width)
     texture := rl.LoadTextureFromImage(height_map)
+
+    points := make([dynamic]f32 , sample_count*sample_count)
+    // defer delete(points)
+    mat: = make([dynamic]u8 , sample_count*sample_count)
+    defer delete(mat)
+    log.debug("generating points")
+
+
+    chunk_world_size :=auto_cast (f32(sample_count-1)*cell_size)
+
+
     for y:u32 =0;y<sample_count; y+=1{
         for x:u32 =0;x<sample_count; x+=1{
             color := rl.GetImageColor(height_map,auto_cast x,auto_cast y)
@@ -478,6 +491,15 @@ generate_chunk :: proc(sample_count:u32,max_height:f32,cell_size:f32,chunk_offse
     if g.chunk_load_index > MAX_LOADED_CHUNKS {
         g.chunk_load_index = 0
     }
+}
+
+load_chunk_from_file :: proc(file_name:string,max_height:f32,cell_size:f32,chunk_offset:Vec3){
+    //cringe ass clone
+    cstring_name := strings.clone_to_cstring(file_name)
+    defer delete(cstring_name)
+    height_map :=  rl.LoadImage(cstring_name)
+    defer rl.UnloadImage(height_map)
+    gen_chunk_from_image(height_map,max_height,cell_size,chunk_offset)
 
 }
 
@@ -567,6 +589,7 @@ game_init :: proc() {
 	g.run = true
 	g.physicsManager = create_physics_mannager()
 	// g.floor = add_floor(&g.physicsManager)
+	// load_chunk_from_file("Mountain Range.png",300,5,{0,0,0})
 	generate_chunk(700,300,5,{0,0,0})
 	generate_chunk(700,300,5,{1,0,0})
 	generate_chunk(700,300,5,{0,0,1})
@@ -578,6 +601,12 @@ game_init :: proc() {
 	generate_chunk(700,300,5,{1,0,-1})
 	g.render_texture = rl.LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT  )
 	g.shaders[0] = rl.LoadShader("pixlizer","assets/shaders/pixlizer.fs")
+	width_index := rl.GetShaderLocation(g.shaders[0],"renderWidth")
+	heigth_index := rl.GetShaderLocation(g.shaders[0],"renderHeight")
+	g.render_width  = int(rl.GetRenderWidth())
+	g.render_height = int(rl.GetRenderHeight())
+	rl.SetShaderValue(g.shaders[0],width_index,&g.render_width,rl.ShaderUniformDataType.FLOAT)
+	rl.SetShaderValue(g.shaders[0],heigth_index,&g.render_height,rl.ShaderUniformDataType.FLOAT)
 
 	for i := 0; i < 20;i +=1 {
         // add_box({ position = { 0,    0.75, -3   }, extent = 0.75, rotation = 1, color = rl.RED })
