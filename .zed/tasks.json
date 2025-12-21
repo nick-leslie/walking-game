@@ -4,7 +4,7 @@
 [
   {
     "label": "Run game",
-    "command": "./build_hot_reload.sh run && ./game_hot_reload.bin",
+    "command": "./build_hot_reload.sh && ./game_hot_reload.bin",
     //"args": [],
     // Env overrides for the command, will be appended to the terminal's environment from the settings.
     "env": { "foo": "bar" },

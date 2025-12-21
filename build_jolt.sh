@@ -25,4 +25,4 @@ echo "copying lib and h file"
 cp ./joltc/include/joltc.h libs/jolt/jolt.h
 cp ./joltc/build/lib/libjoltcd.so libs/jolt
 echo "generating bindigns"
-bindgen.bin ./libs/jolt
+./bindgen.bin ./libs/jolt
