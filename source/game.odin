@@ -29,7 +29,6 @@ package game
 
 import "core:fmt"
 import "core:math"
-import "core:strings"
 // import "core:math/linalg"
 import jolt "../libs/jolt"
 import "base:runtime"
@@ -118,18 +117,7 @@ CAMERA_DISTANCE :: 10
 
 
 fixed_step: f32 = 1.0 / 60.0 // do we need this here or should we put this in the update
-Character :: struct {
-	move_input:        Vec3,
-	jump_requested:    bool,
-	up:                Vec3,
-	prev_position:     Vec3,
-	position:          Vec3,
-	look_yaw:          f32,
-	look_pitch:        f32,
-	physics_character: ^jolt.CharacterVirtual,
-	look_input:        [2]f32,
-	look_quat:         Quat,
-}
+
 
 g: ^Game_Memory
 g_context: runtime.Context // should we store this
@@ -184,101 +172,6 @@ physics_update :: proc() {
 	)
 }
 
-charecter_physics_update :: proc() {
-	g.character.prev_position = g.character.position
-	jump_pressed := g.character.jump_requested
-
-	// get up vector (and update it in the character struct just in case)
-	up: Vec3; jolt.CharacterBase_GetUp(auto_cast g.character.physics_character, &up)
-	g.character.up = up
-
-	// A cheaper way to update the character's ground velocity, the platforms that the character is standing on may have changed velocity
-	jolt.CharacterVirtual_UpdateGroundVelocity(g.character.physics_character)
-	ground_velocity: Vec3; jolt.CharacterBase_GetGroundVelocity(auto_cast g.character.physics_character, &ground_velocity)
-
-	current_velocity: Vec3; jolt.CharacterVirtual_GetLinearVelocity(g.character.physics_character, &current_velocity)
-	current_vertical_velocity := linalg.dot(current_velocity, up) * up
-
-	new_velocity: Vec3
-	if jolt.CharacterBase_GetGroundState(auto_cast g.character.physics_character) == .OnGround {
-		// Assume velocity of ground when on ground
-		new_velocity = ground_velocity
-
-		// Jump
-		// moving_towards_ground := (current_vertical_velocity.y - ground_velocity.y) < 0.1
-		if jump_pressed {
-			new_velocity += JUMP_SPEED * up
-		}
-	} else {
-		new_velocity = current_vertical_velocity
-	}
-
-	// Add gravity
-	gravity: Vec3; jolt.PhysicsSystem_GetGravity(g.physicsManager.physicsSystem, &gravity)
-	new_velocity += gravity * fixed_step
-
-	input := linalg.mul(g.character.look_quat, g.character.move_input)
-	input.y = 0
-	input = linalg.normalize0(input)
-	if jolt.CharacterBase_IsSupported(auto_cast g.character.physics_character) == true {
-		if rl.IsKeyDown(.LEFT_SHIFT) {
-			new_velocity += input * (MOVE_SPEED + SPRINT_MOD)
-			log.debug("sprinting")
-		} else {
-			new_velocity += input * MOVE_SPEED
-		}
-	} else {
-		// preserve horizontal velocity
-		current_horizontal_velocity := current_velocity - current_vertical_velocity
-		new_velocity += current_horizontal_velocity * AIR_DRAG
-		new_velocity += input * AIR_MOVE_SPEED
-	}
-	// set the velocity to the character
-	jolt.CharacterVirtual_SetLinearVelocity(g.character.physics_character, &new_velocity)
-
-	extended_settings := jolt.ExtendedUpdateSettings {
-		stickToFloorStepDown             = {0, -0.5, 0},
-		walkStairsStepUp                 = {0, 0.4, 0},
-		walkStairsMinStepForward         = 0.02,
-		walkStairsStepForwardTest        = 0.30,
-		walkStairsCosAngleForwardContact = math.cos(math.to_radians_f32(75.0)),
-		walkStairsStepDownExtra          = {},
-	}
-
-	// update the character physics (btw there's also CharacterVirtual_ExtendedUpdate with stairs support)
-	jolt.CharacterVirtual_ExtendedUpdate(
-		g.character.physics_character,
-		fixed_step,
-		&extended_settings,
-		PHYS_LAYER_MOVING,
-		g.physicsManager.physicsSystem,
-		nil,
-		nil,
-	)
-
-	// read the new position into our structure
-	jolt.CharacterVirtual_GetPosition(g.character.physics_character, &g.character.position)
-
-	// if we're on the ground, try pushing currect contacts away
-	if jolt.CharacterBase_GetGroundState(auto_cast g.character.physics_character) == .OnGround {
-		for i in 0 ..< jolt.CharacterVirtual_GetNumActiveContacts(g.character.physics_character) {
-			contact: jolt.CharacterVirtualContact; jolt.CharacterVirtual_GetActiveContact(g.character.physics_character, i, &contact)
-			for &floor in g.chunks.floor {
-				if contact.bodyB == floor do continue
-			}
-			if contact.motionTypeB == .Dynamic {
-				PUSH_FORCE :: 100
-				push_vector := -contact.contactNormal * PUSH_FORCE
-				jolt.BodyInterface_AddImpulse2(
-					g.physicsManager.bodyInterface,
-					contact.bodyB,
-					&push_vector,
-					&contact.position,
-				)
-			}
-		}
-	}
-}
 
 draw :: proc() {
 	{
@@ -369,78 +262,7 @@ spawn_3d_cam :: proc() -> rl.Camera3D {
 	}
 }
 
-create_physics_mannager :: proc() -> Physics_Manager {
-	ok := jolt.Init()
-	log.debug(ok)
-	assert(ok == true, "Failed to init Jolt Physics")
-	g_context = context
-	jolt.SetTraceHandler(proc "c" (message: cstring) {
-		context = g_context
-		log.debugf("JOLT: %v", message)
-	})
-	jobSystem := jolt.JobSystemThreadPool_Create(nil)
 
-	object_layer_pair_filter := jolt.ObjectLayerPairFilterTable_Create(2)
-	jolt.ObjectLayerPairFilterTable_EnableCollision(
-		object_layer_pair_filter,
-		PHYS_LAYER_MOVING,
-		PHYS_LAYER_NON_MOVING,
-	)
-	jolt.ObjectLayerPairFilterTable_EnableCollision(
-		object_layer_pair_filter,
-		PHYS_LAYER_MOVING,
-		PHYS_LAYER_MOVING,
-	)
-
-	broad_phase_layer_interface := jolt.BroadPhaseLayerInterfaceTable_Create(2, 2)
-	jolt.BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
-		broad_phase_layer_interface,
-		PHYS_LAYER_MOVING,
-		PHYS_BROAD_LAYER_MOVING,
-	)
-	jolt.BroadPhaseLayerInterfaceTable_MapObjectToBroadPhaseLayer(
-		broad_phase_layer_interface,
-		PHYS_LAYER_NON_MOVING,
-		PHYS_BROAD_LAYER_NON_MOVING,
-	)
-
-	object_vs_broad_phase_layer_filter := jolt.ObjectVsBroadPhaseLayerFilterTable_Create(
-		broad_phase_layer_interface,
-		2,
-		object_layer_pair_filter,
-		2,
-	)
-	physics_system := jolt.PhysicsSystem_Create(
-		&{
-			maxBodies = 65536,
-			numBodyMutexes = 0,
-			maxBodyPairs = 65536,
-			maxContactConstraints = 65536,
-			broadPhaseLayerInterface = broad_phase_layer_interface,
-			objectLayerPairFilter = object_layer_pair_filter,
-			objectVsBroadPhaseLayerFilter = object_vs_broad_phase_layer_filter,
-		},
-	)
-
-	g_body_iface := jolt.PhysicsSystem_GetBodyInterface(physics_system)
-
-
-	manager := Physics_Manager {
-		jobSystem                     = jobSystem,
-		objectLayerPairFilter         = object_layer_pair_filter,
-		broadPhaseLayerFilter         = broad_phase_layer_interface,
-		objectVsBroadPhaseLayerFilter = object_vs_broad_phase_layer_filter,
-		bodyInterface                 = g_body_iface,
-		physicsSystem                 = physics_system,
-	}
-	return manager
-}
-
-destroy_physics_mannager :: proc(physicsManager: ^Physics_Manager) {
-	jolt.JobSystem_Destroy(physicsManager.jobSystem)
-	jolt.PhysicsSystem_Destroy(physicsManager.physicsSystem)
-	jolt.Shutdown()
-}
 
 add_floor :: proc(pm: ^Physics_Manager) -> jolt.BodyID {
 	floor_extent := Vec3{100, 0.05, 100}
@@ -463,133 +285,7 @@ add_floor :: proc(pm: ^Physics_Manager) -> jolt.BodyID {
 	return floor_body_id
 }
 
-rgb_to_gray :: proc(color: rl.Color) -> f32 {
-	r_f := f32(color.r) / 255.0
-	g_f := f32(color.g) / 255.0
-	b_f := f32(color.b) / 255.0
-	//     #define GRAY_VALUE(c) ((float)(c.r + c.g + c.b)/3.0f) rl gray value
-	return 0.2126 * r_f + 0.7152 * g_f + 0.0722 * b_f
-}
 
-rgb_to_gray_ray :: proc(color: rl.Color) -> f32 {
-	return f32(color.r + color.g + color.b) / 3.0
-}
-
-//todo add an offset xy for gen
-generate_chunk :: proc(sample_count: u32, max_height: f32, cell_size: f32, chunk_offset: Vec3) {
-	log.debug("in height map floor")
-	height_map := rl.GenImagePerlinNoise(
-		auto_cast sample_count,
-		auto_cast sample_count,
-		auto_cast chunk_offset.x * i32(sample_count - 1),
-		auto_cast chunk_offset.z * i32(sample_count - 1),
-		cell_size,
-	)
-
-	defer rl.UnloadImage(height_map)
-	gen_chunk_from_image(height_map, max_height, cell_size, chunk_offset)
-}
-
-gen_chunk_from_image :: proc(
-	height_map: rl.Image,
-	max_height: f32,
-	cell_size: f32,
-	chunk_offset: Vec3,
-) {
-	if height_map.width != height_map.width {
-		return
-	}
-	sample_count: u32 = u32(height_map.width)
-	texture := rl.LoadTextureFromImage(height_map)
-
-	points := make([dynamic]f32, sample_count * sample_count)
-	// defer delete(points)
-	// mat := make([dynamic]u8, sample_count * sample_count)
-	// defer delete(mat)
-	log.debug("generating points")
-
-
-	chunk_world_size := auto_cast (f32(sample_count - 1) * cell_size)
-
-
-	for y: u32 = 0; y < sample_count; y += 1 {
-		for x: u32 = 0; x < sample_count; x += 1 {
-			color := rl.GetImageColor(height_map, auto_cast x, auto_cast y)
-			noise_val := rgb_to_gray(color)
-			points[y * sample_count + x] = noise_val
-		}
-	}
-	// log.debug(points[:])
-	log.debug("about to create floor settings")
-	floor_scale := Vec3{cell_size, max_height, cell_size}
-	height_settings := jolt.HeightFieldShapeSettings_Create(
-		samples = raw_data(points),
-		offset = &{0, 0, 0},
-		scale = &floor_scale,
-		sampleCount = sample_count,
-		materialIndices = nil,
-	)
-	log.debug("created height settings")
-
-	floor_position := Vec3 {
-		(chunk_offset.x * chunk_world_size),
-		0,
-		(chunk_offset.z * chunk_world_size),
-	}
-
-	floor_shape := jolt.HeightFieldShapeSettings_CreateShape(height_settings)
-	defer jolt.Shape_Destroy(auto_cast floor_shape)
-
-	floor_settings := jolt.BodyCreationSettings_Create3(
-		shape = auto_cast floor_shape,
-		position = &floor_position,
-		rotation = &QUAT_IDENTITY,
-		motionType = .Static,
-		objectLayer = PHYS_LAYER_NON_MOVING,
-	)
-
-	log.debug("creating body")
-	floor_body_id := jolt.BodyInterface_CreateAndAddBody(
-		g.physicsManager.bodyInterface,
-		floor_settings,
-		.Activate,
-	)
-	jolt.BodyCreationSettings_Destroy(floor_settings)
-
-	mesh := rl.GenMeshHeightmap(height_map, {chunk_world_size, max_height, chunk_world_size})
-
-	model := rl.LoadModelFromMesh(mesh)
-	model.materials[0].maps[0].texture = texture
-
-
-	g.chunks.floor[g.chunk_load_index] = floor_body_id
-	g.chunks.points[g.chunk_load_index] = points
-	g.chunks.texture[g.chunk_load_index] = texture
-	g.chunks.position[g.chunk_load_index] = floor_position
-	g.chunks.scale[g.chunk_load_index] = floor_scale
-	g.chunks.sample_size[g.chunk_load_index] = sample_count
-	g.chunks.cell_size[g.chunk_load_index] = cell_size
-	g.chunks.model[g.chunk_load_index] = model
-	g.chunk_load_index += 1
-	if g.chunk_load_index > MAX_LOADED_CHUNKS {
-		g.chunk_load_index = 0
-	}
-}
-
-load_chunk_from_file :: proc(
-	file_name: string,
-	max_height: f32,
-	cell_size: f32,
-	chunk_offset: Vec3,
-) {
-	//cringe ass clone
-	cstring_name := strings.clone_to_cstring(file_name)
-	defer delete(cstring_name)
-	height_map := rl.LoadImage(cstring_name)
-	defer rl.UnloadImage(height_map)
-	gen_chunk_from_image(height_map, max_height, cell_size, chunk_offset)
-
-}
 
 add_box :: proc(box: Box) {
 	box := box
@@ -617,94 +313,6 @@ add_box :: proc(box: Box) {
 }
 
 
-add_character :: proc(pm: ^Physics_Manager, spawn_pos: Vec3) {
-	spawn_pos := spawn_pos
-	// capsule shape with origin at the bottom
-	capsule_shape := jolt.RotatedTranslatedShape_Create(
-		position = &{0, CHARACTER_CAPSULE_HALF_HEIGHT, 0},
-		rotation = &QUAT_IDENTITY,
-		// todo we can change the shape to be what ever we want
-		shape = auto_cast jolt.CapsuleShape_Create(
-			CHARACTER_CAPSULE_HALF_HEIGHT,
-			CHARACTER_CAPSULE_RADIUS,
-		),
-	)
-
-	settings: jolt.CharacterVirtualSettings
-	jolt.CharacterVirtualSettings_Init(&settings)
-	settings.base.shape = auto_cast capsule_shape
-	settings.innerBodyShape = auto_cast capsule_shape // "inner shape" that actually participates in physics (e.g. reacts to raycast and stuff)
-	settings.base.maxSlopeAngle = math.to_radians_f32(90.0)
-	character := jolt.CharacterVirtual_Create(
-		&settings,
-		&spawn_pos,
-		&QUAT_IDENTITY,
-		0,
-		pm.physicsSystem,
-	)
-
-	// use static var so the pointers survive
-	@(static) listener_procs: jolt.CharacterContactListener_Procs
-	listener_procs = {
-		OnContactAdded = proc "c" (
-			context_ptr: rawptr,
-			character: ^jolt.CharacterVirtual,
-			other_body_id: jolt.BodyID,
-			_: jolt.SubShapeID,
-			contact_point: ^Vec3,
-			contact_normal: ^Vec3,
-			contact_settings: ^jolt.CharacterContactSettings,
-		) {
-			for &floor in g.chunks.floor {
-				if other_body_id == floor do return
-
-			}
-
-			context = (cast(^runtime.Context)context_ptr)^
-
-			log.debugf("Contact added: %v", other_body_id)
-		},
-		OnContactPersisted = proc "c" (
-			context_ptr: rawptr,
-			character: ^jolt.CharacterVirtual,
-			other_body_id: jolt.BodyID,
-			_: jolt.SubShapeID,
-			contact_point: ^Vec3,
-			contact_normal: ^Vec3,
-			contact_settings: ^jolt.CharacterContactSettings,
-		) {
-			for &floor in g.chunks.floor {
-				if other_body_id == floor do return
-			}
-
-			context = (cast(^runtime.Context)context_ptr)^
-
-			log.debugf("Contact persisted: %v", other_body_id)
-		},
-		OnContactRemoved = proc "c" (
-			context_ptr: rawptr,
-			character: ^jolt.CharacterVirtual,
-			other_body_id: jolt.BodyID,
-			_: jolt.SubShapeID,
-		) {
-			for &floor in g.chunks.floor {
-				if other_body_id == floor do return
-
-			}
-
-			context = (cast(^runtime.Context)context_ptr)^
-
-			log.debugf("Contact removed: %v", other_body_id)
-		},
-	}
-	log.debug("before contact listener")
-	listener := jolt.CharacterContactListener_Create(&g_context)
-	log.debug("after contact listener")
-	jolt.CharacterContactListener_SetProcs(&listener_procs)
-	jolt.CharacterVirtual_SetListener(character, listener)
-	g.character = {}
-	g.character.physics_character = character
-}
 
 @(export)
 game_init :: proc() {
@@ -713,15 +321,15 @@ game_init :: proc() {
 	g.physicsManager = create_physics_mannager()
 	// g.floor = add_floor(&g.physicsManager)
 	// load_chunk_from_file("Mountain Range.png",300,5,{0,0,0})
-	generate_chunk(1000, 300, 3, {0, 0, 0})
-	// generate_chunk(1000, 300, 2, {1, 0, 0})
-	// generate_chunk(1000, 300, 2, {0, 0, 1})
-	// generate_chunk(1000, 300, 2, {1, 0, 1})
-	// generate_chunk(1000, 300, 2, {-1, 0, 0})
-	// generate_chunk(1000, 300, 2, {0, 0, -1})
-	// generate_chunk(1000, 300, 2, {-1, 0, -1})
-	// generate_chunk(1000, 300, 2, {-1, 0, 1})
-	// generate_chunk(1000, 300, 2, {1, 0, -1})
+	generate_chunk(1000, 300, 5, {0, 0, 0})
+	generate_chunk(1000, 300, 5, {1, 0, 0})
+	generate_chunk(1000, 300, 5, {0, 0, 1})
+	generate_chunk(1000, 300, 5, {1, 0, 1})
+	generate_chunk(1000, 300, 5, {-1, 0, 0})
+	generate_chunk(1000, 300, 5, {0, 0, -1})
+	generate_chunk(1000, 300, 5, {-1, 0, -1})
+	generate_chunk(1000, 300, 5, {-1, 0, 1})
+	generate_chunk(1000, 300, 5, {1, 0, -1})
 	g.render_texture = rl.LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT)
 	g.shaders[0] = rl.LoadShader("pixlizer", "assets/shaders/pixlizer.fs")
 	width_index := rl.GetShaderLocation(g.shaders[0], "renderWidth")
